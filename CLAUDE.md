@@ -22,18 +22,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### ビルド
 
-```
+```bash
 cd plugin && make            # QEMU_SRC のデフォルトは /home/sena/app/qemu-v9
 ```
+
 → `plugin/libbitwidth.so` が生成される。
 
 ### 実行
 
-```
+```bash
 qemu-system-arm -M mps2-an385 -nographic -monitor none -serial none -display none \
   -plugin plugin/libbitwidth.so,out=bitwidth.csv \
   -kernel <対象elf>
 ```
+
 QEMUを止める際、SIGKILLだとatexitコールバックが走らずCSVが出ないので注意。SIGTERM推奨、またはguest側でシャットダウンを実装。`out=` を省略すると `bitwidth.csv`（カレントディレクトリ）に出力。
 
 ### 出力フォーマット
