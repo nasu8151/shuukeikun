@@ -2,3 +2,10 @@ temp/
 *.o
 *.so
 *.elf
+benchmarks/embench-iot/
+benchmarks/coremark/
+benchmarks/build/
+benchmarks/results/
+**/.venv/
+**/.env/
+**/__pycache__/

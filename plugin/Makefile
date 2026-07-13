@@ -4,7 +4,7 @@
 # include/qemu-plugin.h (either a built qemu-v9 prefix, or the qemu source
 # checkout itself). Override on the command line if needed:
 #   make QEMU_SRC=/path/to/qemu
-QEMU_SRC ?= /home/sena/app/qemu-v9
+QEMU_SRC = $(shell ./get_qemu.sh)
 
 CC ?= gcc
 CFLAGS ?= -Wall -Wextra -O2 -g -fPIC

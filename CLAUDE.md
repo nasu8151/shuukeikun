@@ -13,7 +13,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 現状のセットアップ状況
 
-`plugin/` 以下にビットワイズ計装プラグイン（bitwidth plugin）のv1実装が完成済み。QEMU本体は `/home/sena/app/qemu`（ソース、ビルド済み `build/`）と `/home/sena/app/qemu-v9`（インストール先prefix、`include/qemu-plugin.h` を含む）にあり、このリポジトリはそれらに対する out-of-tree プラグイン開発用。
+パイプラインは3段構成で、いずれも実装済み：
+
+1. `plugin/` — ビットワイズ計装プラグイン（bitwidth plugin）v1実装
+2. `benchmarks/` — 対象プログラム（Embench-IoT + CoreMark）のビルド・QEMU実行・CSV収集
+3. `analysis/` — 収集したCSVの集計・可視化（`analyze.py`）
+
+リポジトリ直下の `Makefile` は `plugin` と `benchmarks` をまとめてビルドする（`make` / `make clean`）。QEMU本体は `/home/sena/app/qemu`（ソース、ビルド済み `build/`）と `/home/sena/app/qemu-v9`（インストール先prefix、`include/qemu-plugin.h` を含む）にあり、このリポジトリはそれらに対する out-of-tree プラグイン開発用。
 
 - QEMUターゲット：`arm-softmmu`（マシン：`mps2-an385`, Cortex-M3）。バイナリ：`/home/sena/app/qemu-v9/bin/qemu-system-arm`
 - クロスコンパイラ：`arm-none-eabi-gcc`（PATH設定済み、14.2.1）
@@ -23,12 +29,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### ビルド
 
 ```bash
-cd plugin && make            # QEMU_SRC のデフォルトは /home/sena/app/qemu-v9
+make                          # リポジトリ直下: plugin + benchmarks を一括ビルド
+cd plugin && make             # プラグインのみ。QEMU_SRC は get_qemu.sh が
+                               # `dirname $(dirname $(which qemu-system-arm))` で自動検出（PATH上のqemu-system-armから逆算）。
+                               # 手動指定する場合は make QEMU_SRC=/path/to/qemu
 ```
 
 → `plugin/libbitwidth.so` が生成される。
 
-### 実行
+### 実行（プラグイン単体）
 
 ```bash
 qemu-system-arm -M mps2-an385 -nographic -monitor none -serial none -display none \
@@ -38,13 +47,39 @@ qemu-system-arm -M mps2-an385 -nographic -monitor none -serial none -display non
 
 QEMUを止める際、SIGKILLだとatexitコールバックが走らずCSVが出ないので注意。SIGTERM推奨、またはguest側でシャットダウンを実装。`out=` を省略すると `bitwidth.csv`（カレントディレクトリ）に出力。
 
+### ベンチマークのビルド・実行（`benchmarks/`）
+
+```bash
+cd benchmarks
+./build_all.sh   # または `make`（= benchmarks/Makefile 経由で build_all.sh を呼ぶ）
+                  # Embench-IoT (benchmarks/embench-iot/src/*/) のうち単一.cファイル構成の
+                  # ものだけを arm-none-eabi-gcc -O2 でmps2-an385向けにビルドし、build/*.elf に出力。
+                  # 複数ファイル構成のベンチマークはSKIPされる（ビルド不可ではなくpolicyでの除外）。
+./run_all.sh      # build/*.elf それぞれをqemu-system-arm+bitwidth pluginで実行し、
+                  # results/<name>.csv に出力。1本あたり RUNTIME 秒（デフォルト3秒）走らせてSIGTERM。
+```
+
+CoreMark（`benchmarks/coremark/` + 移植レイヤ `benchmarks/coremark_port/`）は上記スクリプトの対象外で、`results/coremark.csv` は別途手動ビルド・実行して置いたもの。`board_support.c`／`startup.s`／`mps2.ld` はEmbench/CoreMark共通の最小ベアメタル起動コード（タイミング精度は考慮しない、プラグインを走らせるためだけの実装）。
+
+### 分析（`analysis/`）
+
+```bash
+analysis/.venv/bin/python analysis/analyze.py                      # 全ベンチマーク対象（benchmarks/results/ → analysis/output/）
+analysis/.venv/bin/python analysis/analyze.py -c                   # crypto系フル実装(nettle-aes/nettle-sha256/md5sum/aha-mont64)を除外
+                                                                     # → 「専用回路に載る」ターゲットドメイン外を落とした集計。output_target_domain/ 等、
+                                                                     # -o で出力先を明示的に分けて使う
+```
+
+集計表（class毎のp50/p90/p99/max）を標準出力に、累積分布・class別内訳・ベンチマーク別内訳のPNGを出力ディレクトリに書く。`-i` で入力CSVディレクトリ、`-e` で個別ベンチマークの除外を指定可能。
+
 ### 出力フォーマット
 
 CSV: `class,bitwidth,count`。`class` は `ADD/SUB/RSB/ADC/SBC/AND/ORR/EOR/BIC/MVN/MUL/DIV/LSL/LSR/ASR/ROR/CMP/CMN/TST/TEQ/STR`、`bitwidth` は0〜32の有効ビット幅。
 
-### 一時ファイル
+### 一時ファイル・サンプルコード
 
-動作確認用のスクラッチファイル（テストELF、デコーダ検証スクリプト等）は `temp/` 以下に置く。
+- `temp/` — 動作確認用のスクラッチファイル（テストELF、デコーダ検証スクリプト等）
+- `examples/` — 汎用の最小ベアメタルスタートアップ例（`start.s`/`vectors.s`/`link.ld`）とサニティチェック用コード（`sancheck/`）。`benchmarks/` 用の起動コードとは別物
 
 ## ターゲットシステムの想定
 
@@ -106,9 +141,17 @@ CSV: `class,bitwidth,count`。`class` は `ADD/SUB/RSB/ADC/SBC/AND/ORR/EOR/BIC/M
 - **重要な実装上の注意**：`qemu_plugin_register_vcpu_insn_exec_cb`のコールバックは命令実行**前**に発火する（QEMU 9.0で実測確認、ヘッダのドキュメントだけでは分からない）。書き戻し系の結果は当該命令の次の命令のコールバック時点（＝前命令完了後）まで遅延サンプリングして対応。TB内で書き戻し命令が最後の命令の場合はサンプリングされない（稀、許容する測定誤差として記録）
 - 実行終了時（`qemu_plugin_register_atexit_cb`）に `class,bitwidth,count` のCSVをダンプ → Pythonで可視化
 
-## ターゲットプログラム（案）
+## ターゲットプログラム
 
-- Embench-IoTから、状態機械パーサ系・CRC32など軽量なもの数本
+### 実装済み（`benchmarks/`、データ収集済み）
+
+- Embench-IoT（単一.cファイル構成の全ベンチマーク、`benchmarks/build_all.sh` が自動選定）：`aha-mont64` `crc32` `depthconv` `edn` `huffbench` `matmult-int` `md5sum` `nettle-aes` `nettle-sha256` `nsichneu` `sglib-combined` `slre` `statemate` `tarfind` `ud` `wikisort`
+- CoreMark（`benchmarks/coremark/` + `benchmarks/coremark_port/`、手動ビルド）
+
+分析時（`analyze.py -c`）は `nettle-aes`/`nettle-sha256`/`md5sum`/`aha-mont64` を専用回路領域として除外し、ターゲットドメイン内の分布のみを見る。
+
+### 未着手（案のまま）
+
 - cJSON等によるメッセージパース
 - FreeRTOSデモ（タスクスケジューラ＋簡易ドライバ層、DMA記述子操作を含むもの）
 - 自作の簡易PIDループ＋しきい値判定コード
@@ -124,7 +167,7 @@ CSV: `class,bitwidth,count`。`class` は `ADD/SUB/RSB/ADC/SBC/AND/ORR/EOR/BIC/M
 - [x] arm-none-eabi-gcc環境の確認・セットアップ
 - [x] ALU命令判定・ビット幅集計プラグインの設計・実装（`plugin/`、v1完成、自作サニティテストで数値レベルの一致を確認済み）
 - [ ] 「アクセラレータ随伴処理」模擬コードの自作
-- [ ] 各ターゲットプログラムのビルド・実行・データ収集
-- [ ] 結果の可視化・分析
+- [x] 各ターゲットプログラムのビルド・実行・データ収集
+- [x] 結果の可視化・分析
 - [ ] （任意）SMULL/UMULL等64bit乗算命令への対応拡張
 - [ ] （任意）STM/PUSH等複数レジスタ転送への対応拡張
