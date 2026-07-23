@@ -280,7 +280,12 @@ def print_summary_table(combined):
 #  CRC32 is deliberately kept -- "lightweight checksums" are explicitly
 #  in-scope even though, as it turns out, CRC32's XOR operations still
 #  exercise near-full-width values.
-CRYPTO_EXCLUDE = {"nettle-aes", "nettle-sha256", "md5sum", "aha-mont64"}
+#
+#  picojpeg is excluded alongside the crypto benches: it's a full JPEG
+#  decoder including a Winograd IDCT (an FFT-family transform), which
+#  CLAUDE.md's methodology treats as dedicated-accelerator territory just
+#  like AES/SHA, not softcore-domain code.
+CRYPTO_EXCLUDE = {"nettle-aes", "nettle-sha256", "md5sum", "aha-mont64", "picojpeg"}
 
 
 def main():
@@ -289,12 +294,12 @@ def main():
     exclude = []
     if args.exclude_crypto:
         exclude = CRYPTO_EXCLUDE
-        print("excluded benches that should implemented on dedicated circuits (e.g. AES.)")
+        print("excluded benches that should implemented on dedicated circuits (e.g. AES, JPEG.)")
     if args.exclude:
         exclude += args.exclude
         print(f"args.excluded: {sorted(args.exclude)}")
 
-    per_bench, combined = load_results(args.result, exclude=args.exclude)
+    per_bench, combined = load_results(args.result, exclude=exclude)
     if not per_bench:
         print(f"No CSV files found in {args.result}", file=sys.stderr)
         sys.exit(1)

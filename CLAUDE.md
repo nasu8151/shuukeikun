@@ -52,9 +52,9 @@ QEMUを止める際、SIGKILLだとatexitコールバックが走らずCSVが出
 ```bash
 cd benchmarks
 ./build_all.sh   # または `make`（= benchmarks/Makefile 経由で build_all.sh を呼ぶ）
-                  # Embench-IoT (benchmarks/embench-iot/src/*/) のうち単一.cファイル構成の
-                  # ものだけを arm-none-eabi-gcc -O2 でmps2-an385向けにビルドし、build/*.elf に出力。
-                  # 複数ファイル構成のベンチマークはSKIPされる（ビルド不可ではなくpolicyでの除外）。
+                  # Embench-IoT (benchmarks/embench-iot/src/*/) の全ベンチマーク（単一/複数.cファイル
+                  # 構成いずれも）を arm-none-eabi-gcc -O2 でmps2-an385向けにビルドし、build/*.elf に出力。
+                  # 複数ファイル構成のディレクトリは配下の*.cを全てまとめてリンクする。
 ./run_all.sh      # build/*.elf それぞれをqemu-system-arm+bitwidth pluginで実行し、
                   # results/<name>.csv に出力。1本あたり RUNTIME 秒（デフォルト3秒）走らせてSIGTERM。
 ```
@@ -65,12 +65,19 @@ CoreMark（`benchmarks/coremark/` + 移植レイヤ `benchmarks/coremark_port/`�
 
 ```bash
 analysis/.venv/bin/python analysis/analyze.py                      # 全ベンチマーク対象（benchmarks/results/ → analysis/output/）
-analysis/.venv/bin/python analysis/analyze.py -c                   # crypto系フル実装(nettle-aes/nettle-sha256/md5sum/aha-mont64)を除外
+analysis/.venv/bin/python analysis/analyze.py -c                   # crypto系フル実装(nettle-aes/nettle-sha256/md5sum/aha-mont64)とpicojpeg(JPEGフル実装)を除外
                                                                      # → 「専用回路に載る」ターゲットドメイン外を落とした集計。output_target_domain/ 等、
                                                                      # -o で出力先を明示的に分けて使う
 ```
 
 集計表（class毎のp50/p90/p99/max）を標準出力に、累積分布・class別内訳・ベンチマーク別内訳のPNGを出力ディレクトリに書く。`-i` で入力CSVディレクトリ、`-e` で個別ベンチマークの除外を指定可能。
+
+`analysis/.venv` は未コミット（`**/.venv/` gitignore）で `requirements.txt` も無いため、新規環境では手動セットアップが必要：
+
+```bash
+cd analysis && python3 -m venv .venv
+.venv/bin/pip install matplotlib pandas numpy
+```
 
 ### 出力フォーマット
 
@@ -78,8 +85,21 @@ CSV: `class,bitwidth,count`。`class` は `ADD/SUB/RSB/ADC/SBC/AND/ORR/EOR/BIC/M
 
 ### 一時ファイル・サンプルコード
 
-- `temp/` — 動作確認用のスクラッチファイル（テストELF、デコーダ検証スクリプト等）
-- `examples/` — 汎用の最小ベアメタルスタートアップ例（`start.s`/`vectors.s`/`link.ld`）とサニティチェック用コード（`sancheck/`）。`benchmarks/` 用の起動コードとは別物
+- `temp/` — 動作確認用のスクラッチファイル（gitignore対象、テストELF、デコーダ検証スクリプト等）
+- **重要**検証時等の一時ファイルは`temp/`に置くこと
+
+### デコーダの検証
+
+`plugin/decode.c` の命令分類ロジックを `arm-none-eabi-objdump` の実際の逆アセンブル結果と突き合わせて検証するスクリプト一式。ホスト（x86-64）上でデコーダをそのままコンパイルして走らせる（デコード対象はARM命令バイト列をデータとして読むだけなので、テスト自体はクロスコンパイル不要）：
+
+```bash
+cd temp
+gcc -o test_decode test_decode.c ../plugin/decode.c   # decode.c/decode.h をホスト向けにビルド
+python3 validate.py corpus1_O0.o                        # 期待クラス(mnemonic→class表)とdecode_insn()の出力を突き合わせ
+python3 validate.py corpus2_O2.o                        # corpus{1,2}_{O0,O1,O2,Os}.o の組み合わせで確認
+```
+
+不一致（mismatch）と未知ニーモニックを標準出力にリストする。分類ロジックを変更したら必ずここを再実行して回帰確認する。
 
 ## ターゲットシステムの想定
 
@@ -95,12 +115,12 @@ CSV: `class,bitwidth,count`。`class` は `ADD/SUB/RSB/ADC/SBC/AND/ORR/EOR/BIC/M
 
 |                                          ドメイン                                           |        扱い        |                                   理由                                    |
 | ------------------------------------------------------------------------------------------- | ------------------ | ------------------------------------------------------------------------- |
-| FIRフィルタ、FFTのフル実装                                                                  | 除外               | 専用DSPアクセラレータに載る想定                                           |
+| FIRフィルタ、FFT/DCTのフル実装（例：JPEGデコード＝`picojpeg`のWinograd IDCT）                | 除外               | 専用DSPアクセラレータ・画像コーデックHWに載る想定                        |
 | AES/SHA等のフル実装                                                                         | 除外               | 専用暗号回路に載る想定                                                    |
-| 制御（PID、状態機械、しきい値判定）                                                         | 採用               | ソフトコア側の主戦場                                                      |
+| 制御（PID、状態機械、しきい値判定。例：決定木推論＝`xgboost`）                              | 採用               | ソフトコア側の主戦場                                                      |
 | パーサ（JSON、Modbus、CANフレーム解析等）                                                   | 採用               | 専用回路化されない                                                        |
 | RTOS/スケジューラ                                                                           | 採用               | ソフトコア以外に載せようがない                                            |
-| CRC/チェックサム（軽量なもの）                                                              | 採用               | 専用IP化されないケースが多い                                              |
+| CRC/チェックサム（軽量なもの。Reed-Solomon等の誤り訂正符号含む、例：QRコード生成＝`qrduino`） | 採用               | 専用IP化されないケースが多い                                              |
 | **アクセラレータ随伴処理**（レジスタ設定、DMA記述子操作、割り込みハンドラでの結果取り出し） | 採用（要追加検討） | dsPIC的構成の核心部分。適切な既存ベンチマークが見当たらないため自作が必要 |
 
 ## アーキテクチャ差についての判断
@@ -145,10 +165,10 @@ CSV: `class,bitwidth,count`。`class` は `ADD/SUB/RSB/ADC/SBC/AND/ORR/EOR/BIC/M
 
 ### 実装済み（`benchmarks/`、データ収集済み）
 
-- Embench-IoT（単一.cファイル構成の全ベンチマーク、`benchmarks/build_all.sh` が自動選定）：`aha-mont64` `crc32` `depthconv` `edn` `huffbench` `matmult-int` `md5sum` `nettle-aes` `nettle-sha256` `nsichneu` `sglib-combined` `slre` `statemate` `tarfind` `ud` `wikisort`
+- Embench-IoT（全ベンチマーク、`benchmarks/build_all.sh` が自動ビルド）：`aha-mont64` `crc32` `depthconv` `edn` `huffbench` `matmult-int` `md5sum` `nettle-aes` `nettle-sha256` `nsichneu` `picojpeg` `qrduino` `sglib-combined` `slre` `statemate` `tarfind` `ud` `wikisort` `xgboost`（うち `picojpeg`/`qrduino`/`xgboost` は複数.cファイル構成）
 - CoreMark（`benchmarks/coremark/` + `benchmarks/coremark_port/`、手動ビルド）
 
-分析時（`analyze.py -c`）は `nettle-aes`/`nettle-sha256`/`md5sum`/`aha-mont64` を専用回路領域として除外し、ターゲットドメイン内の分布のみを見る。
+分析時（`analyze.py -c`）は `nettle-aes`/`nettle-sha256`/`md5sum`/`aha-mont64`/`picojpeg` を専用回路領域として除外し、ターゲットドメイン内の分布のみを見る（`qrduino`/`xgboost`はソフトコア対象ドメインとして採用のまま）。
 
 ### 未着手（案のまま）
 

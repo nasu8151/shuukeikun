@@ -4,6 +4,13 @@
 
 [minc](https://github.com/nasu8151/minc)の最適化のために、組み込み向けプログラムにおける実行時に流れるデータの大きさを調べるプロジェクト。
 
+## 使用したベンチマークとその基準
+
+| ドメイン | 扱い | 理由 |
+| -------- | ---- | ---- |
+|          |      |      |
+|          |      |      |
+
 ## 使い方
 
 まず、`benchmarks/`に[coremark](https://github.com/eembc/coremark)と[embench](https://github.com/embench/embench-iot)をクローンしてください。追跡はされません。
@@ -19,3 +26,7 @@ python3 ./analyze.py
 ```
 
 結果はoutputに格納されます。きっと。
+
+## 注意
+
+- このプロジェクトは、CoreMark, Embench IoTのワークロードを使用して測定を行うが、たとえベンチマークスコアが出たとしても、これを公式のスコアとして用いてはならない。

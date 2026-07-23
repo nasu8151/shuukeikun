@@ -1,8 +1,9 @@
 #!/bin/bash
-# Try to build every single-source-file Embench-IoT benchmark for bare-metal
-# mps2-an385 (Cortex-M3), for the purpose of exercising the bitwidth QEMU
-# plugin against real, established codebases. Not intended to reproduce an
-# official Embench score (no calibrated scale factors, no accurate timing).
+# Try to build every Embench-IoT benchmark (single- or multi-source-file)
+# for bare-metal mps2-an385 (Cortex-M3), for the purpose of exercising the
+# bitwidth QEMU plugin against real, established codebases. Not intended to
+# reproduce an official Embench score (no calibrated scale factors, no
+# accurate timing).
 set -u
 cd "$(dirname "$0")"
 EMB=embench-iot
@@ -16,12 +17,7 @@ declare -a FAIL=()
 
 for d in "$EMB"/src/*/; do
     name=$(basename "$d")
-    csrc=$(find "$d" -maxdepth 1 -name "*.c" | head -1)
-    nfiles=$(find "$d" -maxdepth 1 -name "*.c" | wc -l)
-    if [ "$nfiles" -ne 1 ]; then
-        echo "SKIP  $name (multi-file: $nfiles .c files)"
-        continue
-    fi
+    csrcs=$(find "$d" -maxdepth 1 -name "*.c")
     elf="$OUT/$name.elf"
     log="$OUT/$name.log"
     if arm-none-eabi-gcc -mcpu=cortex-m3 -mthumb -nostartfiles --specs=nosys.specs -O2 \
@@ -29,7 +25,7 @@ for d in "$EMB"/src/*/; do
         -I "$EMB/support" -I "$d" \
         -T mps2.ld \
         -o "$elf" \
-        $SRCS_COMMON "$csrc" -lm > "$log" 2>&1; then
+        $SRCS_COMMON $csrcs -lm > "$log" 2>&1; then
         echo "OK    $name"
         OK+=("$name")
     else
