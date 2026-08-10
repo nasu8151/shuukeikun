@@ -37,6 +37,14 @@ This is free software; see the source for copying conditions.  There is NO
 warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 ```
 
+また、Pythonの仮想環境を作成し、必要なモジュールをインストールしてください。
+
+```shell
+python -m venv .venv
+source ./.venv/bin/activate
+pip install -r requirements.txt
+```
+
 ### 検証のみの場合
 
 ```shell
