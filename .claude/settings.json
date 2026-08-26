@@ -20,7 +20,13 @@
       "Bash(curl:*)",
       "Bash(pkill:*)",
       "Bash(true)",
-      "Bash(git status)"
+      "Bash(sed:*)",
+      "Bash(git status)",
+      "Bash(arm-none-eabi-gcc:*)",
+      "Bash(arm-none-eabi-objdump:*)",
+      "Bash(gcc:*)",
+      "Bash(./custom/check.sh)",
+      "Bash(./benchmarks/build_all.sh)"
     ],
     "deny": [
       "Bash(sudo:*)",

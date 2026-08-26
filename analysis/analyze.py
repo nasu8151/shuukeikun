@@ -6,7 +6,7 @@ core question: how many effective bits do ALU operands / stored values
 actually need at runtime?
 
 Usage:
-    analysis/.venv/bin/python analysis/analyze.py [args.result] [output_dir]
+    .venv/bin/python analysis/analyze.py [args.result] [output_dir]
 
 Defaults: args.result=benchmarks/results, output_dir=analysis/output
 """
@@ -321,7 +321,7 @@ def main():
         subtitle="all instruction classes combined")
 
     by_bench_dir = None
-    if args.exclude_crypto:
+    if not args.no_by_benchmark:
         by_bench_dir = os.path.join(args.output, "by_benchmark")
         os.makedirs(by_bench_dir, exist_ok=True)
         for name, table in per_bench.items():

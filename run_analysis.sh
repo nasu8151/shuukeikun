@@ -21,8 +21,8 @@ echo "start benchmark."
 ./benchmarks/run_all.sh
 echo "completed benchmark."
 echo "start analysis."
-analysis/.venv/bin/python ./analysis/analyze.py
+.venv/bin/python ./analysis/analyze.py
 echo "start targetted domain analyze."
-analysis/.venv/bin/python ./analysis/analyze.py -c -o analysis/output_target_domain
+.venv/bin/python ./analysis/analyze.py -c -o analysis/output_target_domain
 echo "completed analysis."
 echo "done!"

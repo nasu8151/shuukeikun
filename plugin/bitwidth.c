@@ -57,7 +57,13 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_version = QEMU_PLUGIN_VERSION;
 #define NUM_ARM_REGS 16
 #define MAX_BITS 32
 
+/* Register handles are opaque, but QEMU hands them out as small integers
+ * cast to pointers -- and r0's handle is 0, i.e. NULL. So NULL cannot be
+ * used as the "no such register" sentinel; a parallel valid[] flag is
+ * needed. Getting this wrong silently drops every sample whose destination
+ * is r0, which on ARM is the return-value and first-argument register. */
 static struct qemu_plugin_register *reg_handles[NUM_ARM_REGS];
+static bool reg_valid[NUM_ARM_REGS];
 static GByteArray *read_buf;
 static uint64_t histogram[CLS_COUNT][MAX_BITS + 1];
 static char *output_path = NULL;
@@ -82,7 +88,7 @@ static int effective_bits_unsigned(uint32_t v)
 
 static bool read_reg(int idx, uint32_t *out)
 {
-    if (idx < 0 || idx >= NUM_ARM_REGS || !reg_handles[idx]) {
+    if (idx < 0 || idx >= NUM_ARM_REGS || !reg_valid[idx]) {
         return false;
     }
     g_byte_array_set_size(read_buf, 0);
@@ -212,23 +218,47 @@ static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
     }
 }
 
+static void bind_reg(int idx, struct qemu_plugin_register *handle)
+{
+    if (idx >= 0 && idx < NUM_ARM_REGS) {
+        reg_handles[idx] = handle;
+        reg_valid[idx] = true;
+    }
+}
+
+/* "r" followed by nothing but digits, and nothing else -- atoi() would
+ * quietly answer 0 for any other r-name and bind it over r0. */
+static bool parse_rn(const char *name, int *idx)
+{
+    if (name[0] != 'r' || name[1] == '\0') {
+        return false;
+    }
+    int n = 0;
+    for (const char *p = name + 1; *p; p++) {
+        if (*p < '0' || *p > '9') {
+            return false;
+        }
+        n = n * 10 + (*p - '0');
+    }
+    *idx = n;
+    return true;
+}
+
 static void vcpu_init(qemu_plugin_id_t id, unsigned int vcpu_index)
 {
     GArray *regs = qemu_plugin_get_registers();
     for (guint i = 0; i < regs->len; i++) {
         qemu_plugin_reg_descriptor *d =
             &g_array_index(regs, qemu_plugin_reg_descriptor, i);
-        if (strlen(d->name) >= 1 && d->name[0] == 'r') {
-            int idx = atoi(d->name + 1);
-            if (idx >= 0 && idx < NUM_ARM_REGS) {
-                reg_handles[idx] = d->handle;
-            }
+        int idx;
+        if (parse_rn(d->name, &idx)) {
+            bind_reg(idx, d->handle);
         } else if (!strcmp(d->name, "sp")) {
-            reg_handles[13] = d->handle;
+            bind_reg(13, d->handle);
         } else if (!strcmp(d->name, "lr")) {
-            reg_handles[14] = d->handle;
+            bind_reg(14, d->handle);
         } else if (!strcmp(d->name, "pc")) {
-            reg_handles[15] = d->handle;
+            bind_reg(15, d->handle);
         }
     }
     g_array_free(regs, TRUE);
