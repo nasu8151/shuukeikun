@@ -27,10 +27,17 @@ BLUE = "#2a78d6"
 BLUE_SOFT = "#9ec5f4"  # sequential step 200, for the density bars (recessive vs the line)
 RED = "#e34948"        # categorical slot 6, for the cumulative line (contrasts with blue bars)
 GRID = "#d8d7d2"
+MUTED = "#898781"      # chrome ink: the 8/16-bit reference rules (recessive vs both marks)
+SURFACE = "#ffffff"    # figure face; the 2px ring that lifts a marker off the line it sits on
 TEXT_PRIMARY = "#0b0b0b"
 TEXT_SECONDARY = "#52514e"
 
 MAX_BITS = 32
+
+# Candidate softcore datapath widths. The design question is "what fraction of
+# the traffic fits?", so these get read off the cumulative curve directly rather
+# than being inferred from the p50/p90/p99 callouts.
+REF_BITS = (8, 16)
 
 parser = argparse.ArgumentParser(description="""
 Analyze bitwidth-plugin CSV output (class,bitwidth,count) from one or more \
@@ -120,6 +127,32 @@ def bitwidth_series(bw_counts):
     return xs, density, cum, total
 
 
+def ref_bit_shares(cum):
+    """[(bits, cumulative % at that width), ...] for each REF_BITS entry."""
+    return [(w, cum[w] if w < len(cum) else 100.0) for w in REF_BITS]
+
+
+def draw_ref_rules(ax, cum, label=True, lw=1.0, markersize=7.5):
+    """Vertical rules at the candidate datapath widths, with a dot where each
+    crosses the cumulative curve. `label=True` also writes the share next to the
+    dot (only the roomy single-plot charts; the small multiples put it in the
+    header instead)."""
+    for w, y in ref_bit_shares(cum):
+        ax.axvline(w, color=MUTED, linewidth=lw, linestyle=(0, (4, 3)), zorder=2.5)
+        # clip_on=False so a dot sitting exactly on 100% draws whole, not halved
+        ax.plot([w], [y], marker="o", markersize=markersize, color=RED,
+                markeredgecolor=SURFACE, markeredgewidth=2, zorder=5, clip_on=False)
+        if not label:
+            continue
+        above = y <= 85
+        ax.annotate(f"≤{w} bit: {y:.1f}%", xy=(w, y),
+                    xytext=(w + 0.6, y + 5 if above else y - 9),
+                    va="bottom" if above else "top",
+                    fontsize=9, color=TEXT_PRIMARY, zorder=6,
+                    bbox=dict(boxstyle="round,pad=0.25", facecolor=SURFACE,
+                              edgecolor="none", alpha=0.85))
+
+
 def plot_cumulative_overall(combined, out_path):
     agg = collections.Counter()
     for cls, bw_counts in combined.items():
@@ -138,6 +171,8 @@ def plot_cumulative_overall(combined, out_path):
                      xytext=(w + 1.2, pct - 8 if pct > 15 else pct + 6),
                      fontsize=8.5, color=TEXT_SECONDARY,
                      arrowprops=dict(arrowstyle="-", color=GRID, lw=0.8))
+
+    draw_ref_rules(ax, cum)
 
     style_axes(ax)
     ax.set_xlim(0, MAX_BITS)
@@ -212,7 +247,7 @@ def plot_class_histograms(table, out_path, title, subtitle=None):
 
     ncols = 4
     nrows = -(-len(classes) // ncols)
-    fig, axes = plt.subplots(nrows, ncols, figsize=(ncols * 3.0, nrows * 2.1), dpi=150)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(ncols * 3.0, nrows * 2.35), dpi=150)
     axes = axes.flatten() if len(classes) > 1 else [axes]
 
     for i, cls in enumerate(classes):
@@ -220,7 +255,14 @@ def plot_class_histograms(table, out_path, title, subtitle=None):
         xs, density, cum, total = bitwidth_series(table[cls])
         ax.bar(xs, density, color=BLUE_SOFT, width=1.0, zorder=2)
         ax.plot(xs, cum, color=RED, linewidth=1.3, zorder=3)
-        ax.set_title(f"{cls}  (n={total:,})", fontsize=8.5, color=TEXT_PRIMARY, loc="left")
+        draw_ref_rules(ax, cum, label=False, lw=0.7, markersize=4.5)
+        ax.set_title(f"{cls}  (n={total:,})", fontsize=8.5, color=TEXT_PRIMARY,
+                     loc="left", pad=13)
+        # These panels have no y axis, so the two design-relevant readings go in
+        # the header rather than being eyeballed off the curve.
+        ax.text(0, 1.01, "   ".join(f"≤{w}b {y:.0f}%" for w, y in ref_bit_shares(cum)),
+                transform=ax.transAxes, ha="left", va="bottom",
+                fontsize=7.5, color=TEXT_SECONDARY)
         ax.set_xlim(-0.5, MAX_BITS + 0.5)
         ax.set_ylim(0, 100)
         ax.tick_params(labelsize=6.5, colors=TEXT_SECONDARY)
@@ -236,6 +278,8 @@ def plot_class_histograms(table, out_path, title, subtitle=None):
     handles = [
         plt.Rectangle((0, 0), 1, 1, color=BLUE_SOFT, label="% of this class's operations in this bin"),
         plt.Line2D([0], [0], color=RED, linewidth=1.5, label="cumulative %"),
+        plt.Line2D([0], [0], color=MUTED, linewidth=1, linestyle=(0, (4, 3)),
+                   label=f"{' / '.join(str(w) for w in REF_BITS)}-bit datapath"),
     ]
     fig.legend(handles=handles, loc="upper right", frameon=False, fontsize=8,
                labelcolor=TEXT_SECONDARY, bbox_to_anchor=(0.99, 0.995))
@@ -285,7 +329,7 @@ def print_summary_table(combined):
 #  decoder including a Winograd IDCT (an FFT-family transform), which
 #  CLAUDE.md's methodology treats as dedicated-accelerator territory just
 #  like AES/SHA, not softcore-domain code.
-CRYPTO_EXCLUDE = {"nettle-aes", "nettle-sha256", "md5sum", "aha-mont64", "picojpeg"}
+CRYPTO_EXCLUDE = {"nettle-aes", "nettle-sha256", "md5sum", "aha-mont64", "picojpeg", "edn"}
 
 
 def main():
@@ -293,11 +337,11 @@ def main():
     os.makedirs(args.output, exist_ok=True)
     exclude = []
     if args.exclude_crypto:
-        exclude = CRYPTO_EXCLUDE
+        exclude = list(CRYPTO_EXCLUDE)
         print("excluded benches that should implemented on dedicated circuits (e.g. AES, JPEG.)")
     if args.exclude:
         exclude += args.exclude
-        print(f"args.excluded: {sorted(args.exclude)}")
+        print(f"excluded: {exclude}")
 
     per_bench, combined = load_results(args.result, exclude=exclude)
     if not per_bench:
